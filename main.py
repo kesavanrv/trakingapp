@@ -4,8 +4,15 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import sqlite3
 from datetime import datetime
+from fastapi.responses import RedirectResponse
 
 DB_PATH = "tracking.db"
+
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/map")
 
 # ---------- DB helpers ----------
 
