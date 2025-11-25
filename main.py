@@ -1,21 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 import sqlite3
 from datetime import datetime
-from fastapi.responses import RedirectResponse
 
 DB_PATH = "tracking.db"
 
-
-
-@app.get("/")
-def root():
-    return RedirectResponse(url="/map")
-
 # ---------- DB helpers ----------
-
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -41,7 +33,6 @@ def get_db():
 init_db()
 
 # ---------- FastAPI app ----------
-
 app = FastAPI()
 
 app.add_middleware(
@@ -52,8 +43,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- Pydantic model ----------
+# ---------- Root Redirect ----------
+@app.get("/")
+def root():
+    return RedirectResponse(url="/map")
 
+# ---------- Pydantic model ----------
 class LocationIn(BaseModel):
     vehicle_id: str
     lat: float
@@ -62,7 +57,6 @@ class LocationIn(BaseModel):
     fuel: float = 0.0
 
 # ---------- API endpoints ----------
-
 @app.post("/api/location")
 def create_location(loc: LocationIn):
     conn = get_db()
@@ -104,8 +98,6 @@ def get_all_locations():
     return [dict(r) for r in rows]
 
 # ---------- Map page ----------
-
 @app.get("/map")
 def map_page():
-    # map.html must be in the same folder as main.py
     return FileResponse("map.html")
