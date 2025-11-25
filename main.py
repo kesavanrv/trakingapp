@@ -32,6 +32,8 @@ def get_db():
 
 init_db()
 
+DB_PATH = "/tmp/tracking.db"
+
 # ---------- FastAPI app ----------
 app = FastAPI()
 
