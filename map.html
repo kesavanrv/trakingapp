@@ -66,7 +66,8 @@
   ></script>
 
   <script>
-    const API_BASE = "http://192.168.1.22:8000";  // your PC IP
+    //const API_BASE = "http://192.168.1.22:8000";  // your PC IP
+    const API_BASE = window.location.origin;
     const VEHICLE_ID = "ANDROID01";
 
     const statusEl = document.getElementById("status");
@@ -124,8 +125,8 @@
           map.setView(newLatLng, 16);
         } else {
           marker.setLatLng(newLatLng);
+          map.panTo(newLatLng);  // add this line
         }
-
         const latlngs = polyline.getLatLngs();
         const last = latlngs[latlngs.length - 1];
         if (!last || last.lat !== lat || last.lng !== lon) {
