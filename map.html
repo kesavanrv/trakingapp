@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Vehicle Live Tracking & Trip Replay</title>
+  <title>Vehicle Live Tracking</title>
 
   <!-- Leaflet CSS -->
   <link
@@ -23,17 +23,11 @@
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    #top-bar {
+    #info {
       padding: 6px 10px;
-      font-size: 14px;
+      font-size: 13px;
       background: #f5f5f5;
       border-bottom: 1px solid #ddd;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    #info-line {
       white-space: nowrap;
       overflow-x: auto;
     }
@@ -43,64 +37,43 @@
       font-weight: 600;
     }
 
-    #controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      align-items: center;
-      font-size: 13px;
+    #replayControls {
+      margin-left: 10px;
     }
 
-    #controls button {
-      padding: 4px 8px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      background: #fff;
-      cursor: pointer;
-    }
-
-    #controls button.active {
-      background: #0066cc;
-      color: white;
-      border-color: #0050a8;
-    }
-
-    #controls input[type="date"] {
-      padding: 2px 4px;
-      font-size: 13px;
+    #replayDate {
+      font-size: 12px;
     }
 
     #map {
       width: 100%;
-      height: calc(100vh - 70px); /* full screen minus header */
+      height: calc(100vh - 40px);
     }
   </style>
 </head>
 
 <body>
-  <div id="top-bar">
-    <div id="info-line">
-      Mode: <span id="mode">Live</span> |
-      Vehicle: <span id="vehicle"></span> |
-      Lat: <span id="lat">-</span> |
-      Lon: <span id="lon">-</span> |
-      Speed: <span id="speed">-</span> |
-      Time: <span id="time">-</span> |
-      Status: <span id="status">Waiting...</span>
-    </div>
+  <div id="info">
+    Vehicle:
+    <select id="vehicleSelect"></select>
+    |
+    Lat: <span id="lat">-</span> |
+    Lon: <span id="lon">-</span> |
+    Speed: <span id="speed">-</span> |
+    Time: <span id="time">-</span> |
+    Status: <span id="status">Waiting...</span>
+    |
+    Mode:
+    <label><input type="radio" name="mode" value="live" checked /> Live</label>
+    <label><input type="radio" name="mode" value="replay" /> Replay</label>
 
-    <div id="controls">
-      <button id="liveBtn" class="active">Live</button>
-
-      <span>History date:</span>
-      <input type="date" id="dateInput" />
-      <button id="loadTripBtn">Load Trip</button>
-      <button id="playBtn" disabled>Play</button>
-      <button id="pauseBtn" disabled>Pause</button>
-    </div>
+    <span id="replayControls">
+      Date:
+      <input type="date" id="replayDate" />
+      <button id="loadDay">Load</button>
+    </span>
   </div>
 
-  <!-- Map container -->
   <div id="map"></div>
 
   <!-- Leaflet JS -->
@@ -112,29 +85,23 @@
 
   <script>
     const API_BASE = window.location.origin;
-    const VEHICLE_ID = "ANDROID01";
 
     const statusEl = document.getElementById("status");
     const latEl = document.getElementById("lat");
     const lonEl = document.getElementById("lon");
     const speedEl = document.getElementById("speed");
     const timeEl = document.getElementById("time");
-    const vehicleEl = document.getElementById("vehicle");
-    const modeEl = document.getElementById("mode");
+    const vehicleSelect = document.getElementById("vehicleSelect");
+    const replayDateInput = document.getElementById("replayDate");
+    const loadDayBtn = document.getElementById("loadDay");
 
-    const liveBtn = document.getElementById("liveBtn");
-    const dateInput = document.getElementById("dateInput");
-    const loadTripBtn = document.getElementById("loadTripBtn");
-    const playBtn = document.getElementById("playBtn");
-    const pauseBtn = document.getElementById("pauseBtn");
+    const modeRadios = document.querySelectorAll('input[name="mode"]');
 
-    vehicleEl.textContent = VEHICLE_ID;
+    let currentVehicle = null;
+    let mode = "live";
+    let liveTimer = null;
 
-    // Default date = today (browser time)
-    const today = new Date().toISOString().slice(0, 10);
-    dateInput.value = today;
-
-    // Create map
+    // ----- Leaflet map -----
     const map = L.map("map").setView([12.97, 77.59], 13);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
@@ -150,24 +117,99 @@
     let marker = null;
     let polyline = L.polyline([], { color: "blue", weight: 4 }).addTo(map);
 
-    let pollTimer = null;   // for live mode
-    let tripPoints = [];    // [[lat, lon], ...]
-    let tripRaw = [];       // full objects from API
-    let playIndex = 0;
-    let playTimer = null;   // for replay
+    function resetTrack() {
+      if (marker) {
+        map.removeLayer(marker);
+        marker = null;
+      }
+      polyline.setLatLngs([]);
+    }
 
-    // --------- Live Tracking ----------
+    // ----- Vehicle list -----
+    async function loadVehicles() {
+      try {
+        const resp = await fetch(`${API_BASE}/api/vehicles`);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const vehicles = await resp.json();
 
+        vehicleSelect.innerHTML = "";
+        if (vehicles.length === 0) {
+          const opt = document.createElement("option");
+          opt.textContent = "NO DATA";
+          opt.value = "";
+          vehicleSelect.appendChild(opt);
+          currentVehicle = null;
+          statusEl.textContent = "No vehicles in DB yet";
+          return;
+        }
+
+        vehicles.forEach((vid, index) => {
+          const opt = document.createElement("option");
+          opt.value = vid;
+          opt.textContent = vid;
+          vehicleSelect.appendChild(opt);
+          if (index === 0) currentVehicle = vid;
+        });
+
+        vehicleSelect.value = currentVehicle;
+      } catch (err) {
+        console.error("Error loading vehicles:", err);
+        statusEl.textContent = "Error loading vehicles";
+      }
+    }
+
+    vehicleSelect.addEventListener("change", () => {
+      currentVehicle = vehicleSelect.value;
+      resetTrack();
+      if (mode === "live") {
+        statusEl.textContent = "Live tracking";
+      } else {
+        statusEl.textContent = "Pick a date and click Load";
+      }
+    });
+
+    // ----- Mode switching -----
+    modeRadios.forEach((r) => {
+      r.addEventListener("change", () => {
+        mode = document.querySelector('input[name="mode"]:checked').value;
+        resetTrack();
+
+        if (mode === "live") {
+          statusEl.textContent = "Live tracking";
+          startLivePolling();
+        } else {
+          statusEl.textContent = "Pick a date and click Load";
+          stopLivePolling();
+        }
+      });
+    });
+
+    function startLivePolling() {
+      stopLivePolling();
+      fetchLatest(); // immediate
+      liveTimer = setInterval(fetchLatest, 5000);
+    }
+
+    function stopLivePolling() {
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = null;
+      }
+    }
+
+    // ----- LIVE polling -----
     async function fetchLatest() {
+      if (!currentVehicle) return;
+
       try {
         const url = `${API_BASE}/api/locations/latest?vehicle_id=${encodeURIComponent(
-          VEHICLE_ID
+          currentVehicle
         )}`;
         const resp = await fetch(url);
         if (!resp.ok) throw new Error("HTTP " + resp.status);
         const data = await resp.json();
         if (data.error) {
-          statusEl.textContent = "No data yet for " + VEHICLE_ID;
+          statusEl.textContent = "No data yet for " + currentVehicle;
           return;
         }
 
@@ -197,167 +239,77 @@
           polyline.addLatLng(newLatLng);
         }
       } catch (err) {
-        console.error("Error fetching latest location:", err);
+        console.error("Error fetching latest:", err);
         statusEl.textContent = "Error talking to server";
       }
     }
 
-    function startLive() {
-      modeEl.textContent = "Live";
-      liveBtn.classList.add("active");
-      statusEl.textContent = "Live tracking enabled";
+    // ----- REPLAY by date -----
+    loadDayBtn.addEventListener("click", loadReplayDay);
 
-      // clear any replay timers
-      stopReplay();
-
-      if (pollTimer) clearInterval(pollTimer);
-      fetchLatest();
-      pollTimer = setInterval(fetchLatest, 5000);
-    }
-
-    function stopLive() {
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
+    async function loadReplayDay() {
+      if (!currentVehicle) {
+        alert("No vehicle selected");
+        return;
       }
-    }
-
-    // ---------- Trip Replay ----------
-
-    function clearTripState() {
-      tripPoints = [];
-      tripRaw = [];
-      playIndex = 0;
-      stopReplay();
-      playBtn.disabled = true;
-      pauseBtn.disabled = true;
-    }
-
-    function stopReplay() {
-      if (playTimer) {
-        clearInterval(playTimer);
-        playTimer = null;
-      }
-    }
-
-    async function loadTrip() {
-      stopLive();
-      clearTripState();
-
-      const dateVal = dateInput.value;
-      if (!dateVal) {
-        alert("Please pick a date first");
+      const date = replayDateInput.value;
+      if (!date) {
+        alert("Please pick a date");
         return;
       }
 
-      modeEl.textContent = "History";
-      liveBtn.classList.remove("active");
-      statusEl.textContent = `Loading trip for ${dateVal}...`;
+      resetTrack();
+      statusEl.textContent = `Loading ${currentVehicle} on ${date}...`;
 
       try {
-        const url = `${API_BASE}/api/trip?vehicle_id=${encodeURIComponent(
-          VEHICLE_ID
-        )}&trip_date=${dateVal}`;
+        const url = `${API_BASE}/api/locations/by-date?vehicle_id=${encodeURIComponent(
+          currentVehicle
+        )}&date=${encodeURIComponent(date)}`;
         const resp = await fetch(url);
         if (!resp.ok) throw new Error("HTTP " + resp.status);
-        const data = await resp.json();
+        const points = await resp.json();
 
-        if (!Array.isArray(data) || data.length === 0) {
-          statusEl.textContent = `No trip data found for ${dateVal}`;
-          polyline.setLatLngs([]);
+        if (!points.length) {
+          statusEl.textContent = "No data for that day";
           return;
         }
 
-        tripRaw = data;
-        tripPoints = data.map((p) => [p.lat, p.lon]);
+        const latlngs = points.map((p) => [p.lat, p.lon]);
 
-        // draw full path
-        polyline.setLatLngs(tripPoints);
+        polyline.setLatLngs(latlngs);
 
-        const first = tripPoints[0];
+        const first = latlngs[0];
         if (!marker) {
           marker = L.marker(first, { icon: markerIcon }).addTo(map);
+        } else {
+          marker.setLatLng(first);
         }
-        marker.setLatLng(first);
-        map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
 
-        // show info for first point
-        const firstPoint = data[0];
-        latEl.textContent = firstPoint.lat.toFixed(6);
-        lonEl.textContent = firstPoint.lon.toFixed(6);
-        speedEl.textContent = firstPoint.speed.toFixed(2);
-        timeEl.textContent = firstPoint.timestamp;
+        const bounds = L.latLngBounds(latlngs);
+        map.fitBounds(bounds, { padding: [20, 20] });
 
-        statusEl.textContent = `Trip replay loaded (${data.length} points)`;
-        playIndex = 0;
-        playBtn.disabled = false;
-        pauseBtn.disabled = true;
+        const last = points[points.length - 1];
+        latEl.textContent = last.lat.toFixed(6);
+        lonEl.textContent = last.lon.toFixed(6);
+        speedEl.textContent = last.speed.toFixed(2);
+        timeEl.textContent = last.timestamp;
+
+        statusEl.textContent = `Replay: ${currentVehicle} on ${date}`;
       } catch (err) {
-        console.error("Error loading trip:", err);
-        statusEl.textContent = "Error loading trip from server";
+        console.error("Error loading replay day:", err);
+        statusEl.textContent = "Error loading replay data";
       }
     }
 
-    function playTrip() {
-      if (!tripPoints.length) return;
-      if (playTimer) return; // already playing
-
-      statusEl.textContent = "Replaying trip...";
-      playBtn.disabled = true;
-      pauseBtn.disabled = false;
-
-      playTimer = setInterval(() => {
-        playIndex++;
-        if (playIndex >= tripPoints.length) {
-          stopReplay();
-          statusEl.textContent = "Replay finished";
-          playBtn.disabled = false;
-          pauseBtn.disabled = true;
-          return;
-        }
-
-        const pt = tripPoints[playIndex];
-        const raw = tripRaw[playIndex];
-
-        marker.setLatLng(pt);
-        // You can pan the map if you want:
-        // map.panTo(pt);
-
-        latEl.textContent = raw.lat.toFixed(6);
-        lonEl.textContent = raw.lon.toFixed(6);
-        speedEl.textContent = raw.speed.toFixed(2);
-        timeEl.textContent = raw.timestamp;
-      }, 1000); // 1 second per point (adjust for slower/faster playback)
-    }
-
-    function pauseTrip() {
-      if (!playTimer) return;
-      stopReplay();
-      statusEl.textContent = "Replay paused";
-      playBtn.disabled = false;
-      pauseBtn.disabled = true;
-    }
-
-    // ---------- Wire up buttons ----------
-
-    liveBtn.addEventListener("click", () => {
-      startLive();
-    });
-
-    loadTripBtn.addEventListener("click", () => {
-      loadTrip();
-    });
-
-    playBtn.addEventListener("click", () => {
-      playTrip();
-    });
-
-    pauseBtn.addEventListener("click", () => {
-      pauseTrip();
-    });
-
-    // ---------- Start in LIVE mode by default ----------
-    startLive();
+    // ----- Init -----
+    (async function init() {
+      await loadVehicles();
+      if (currentVehicle) {
+        mode = "live";
+        document.querySelector('input[name="mode"][value="live"]').checked = true;
+        startLivePolling();
+      }
+    })();
   </script>
 </body>
 </html>

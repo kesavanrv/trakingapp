@@ -9,13 +9,14 @@ from pathlib import Path
 # ---------- Paths & DB ----------
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "tracking.db"   # absolute path, safer on Render
+DB_PATH = BASE_DIR / "tracking.db"   # absolute path, safer on servers
 
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS locations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             vehicle_id TEXT,
@@ -25,7 +26,8 @@ def init_db():
             fuel REAL,
             timestamp TEXT
         )
-    """)
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -82,7 +84,7 @@ def create_location(loc: LocationIn):
         INSERT INTO locations (vehicle_id, lat, lon, speed, fuel, timestamp)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (loc.vehicle_id, loc.lat, loc.lon, loc.speed, loc.fuel, datetime.now().isoformat())
+        (loc.vehicle_id, loc.lat, loc.lon, loc.speed, loc.fuel, datetime.now().isoformat()),
     )
     conn.commit()
     conn.close()
@@ -112,18 +114,12 @@ def get_latest_location(vehicle_id: str = "ANDROID01"):
     return dict(row)
 
 
-#@app.get("/api/locations")
-#def get_all_locations():
-#    conn = get_db()
- #   cur = conn.cursor()
-  #  cur.execute("SELECT * FROM locations ORDER BY id DESC LIMIT 50")
-   # rows = cur.fetchall()
-    #conn.close()
-    #return [dict(r) for r in rows]
-
-
 @app.get("/api/locations")
 def get_all_locations(vehicle_id: str = "ANDROID01", limit: int = 500):
+    """
+    Get up to `limit` points for a vehicle, in ascending time order.
+    Used mainly for live / recent history.
+    """
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
@@ -139,6 +135,47 @@ def get_all_locations(vehicle_id: str = "ANDROID01", limit: int = 500):
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+@app.get("/api/locations/by-date")
+def get_locations_by_date(date: str, vehicle_id: str = "ANDROID01"):
+    """
+    Get all points for a given vehicle on a specific day.
+    date format: YYYY-MM-DD
+    """
+    start = f"{date}T00:00:00"
+    end = f"{date}T23:59:59"
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, vehicle_id, lat, lon, speed, fuel, timestamp
+        FROM locations
+        WHERE vehicle_id = ?
+          AND timestamp BETWEEN ? AND ?
+        ORDER BY id ASC
+        """,
+        (vehicle_id, start, end),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/vehicles")
+def get_vehicles():
+    """
+    Return a list of distinct vehicle IDs that have sent data.
+    Used to populate the dropdown in map.html.
+    """
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT vehicle_id FROM locations ORDER BY vehicle_id")
+    rows = cur.fetchall()
+    conn.close()
+    return [r["vehicle_id"] for r in rows]
+
 
 # ---------- Map page ----------
 

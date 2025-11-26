@@ -2,6 +2,7 @@ package com.example.trakingapp
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.location.Location
 import android.os.Bundle
 import android.os.Looper
 import android.util.Log
@@ -20,16 +21,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fused: FusedLocationProviderClient
     private val client = OkHttpClient()
 
-    // change this if your PC IP changes
-   // private val BASE_URL = "http://192.168.1.22:8000"
-   // private val BASE_URL = "https://trakingapp.onrender.com/api/location"
+    // ⚠️ Use your EC2 public IP or domain (NO /api/location here)
     private val BASE_URL = "http://3.26.191.239:8000"
+
     private val TAG = "TrackingApp"
+
+    // Throttling / filtering
+    private var lastSentTime: Long = 0L
+    private var lastSentLat: Double? = null
+    private var lastSentLon: Double? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // No UI => white screen is expected
-        // setContentView(R.layout.activity_main)
+        // No UI -> white screen is ok
 
         fused = LocationServices.getFusedLocationProviderClient(this)
 
@@ -37,13 +41,8 @@ class MainActivity : AppCompatActivity() {
             registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
                 val fine = perms[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
                 if (fine) {
-                    Toast.makeText(this, "Location permission granted kesavan hahaha", Toast.LENGTH_SHORT).show()
-                    Toast.makeText(this, "Location permission granted kesavan hahaha", Toast.LENGTH_SHORT).show()
-                    Toast.makeText(this, "Location permission granted kesavan hahaha", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Location permission granted", Toast.LENGTH_SHORT).show()
                     startLocationUpdates()
-
-                    // Debug: send one test ping without GPS, just to check server
-                    sendToServer(12.9345, 77.6112, 0f)
                 } else {
                     Toast.makeText(this, "Location permission denied", Toast.LENGTH_SHORT).show()
                 }
@@ -59,8 +58,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun startLocationUpdates() {
         val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY, 5_000L // 5 seconds
-        ).setMinUpdateDistanceMeters(10f)          // only if moved > 10 m
+            Priority.PRIORITY_HIGH_ACCURACY,
+            5_000L           // request every 5 seconds
+        )
+            .setMinUpdateIntervalMillis(5_000L) // don't get updates faster than this
+            .setMinUpdateDistanceMeters(5f)     // at least 5 m movement
             .build()
 
         if (ActivityCompat.checkSelfPermission(
@@ -69,55 +71,82 @@ class MainActivity : AppCompatActivity() {
             ) != PackageManager.PERMISSION_GRANTED
         ) return
 
-        fused.requestLocationUpdates(request, object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                val loc = result.lastLocation ?: return
-                Log.d(TAG, "Got location: ${loc.latitude}, ${loc.longitude}, speed=${loc.speed}")
-                sendToServer(loc.latitude, loc.longitude, loc.speed)
-            }
-        }, Looper.getMainLooper())
+        fused.requestLocationUpdates(
+            request,
+            object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    val loc = result.lastLocation ?: return
+                    handleNewLocation(loc)
+                }
+            },
+            Looper.getMainLooper()
+        )
+    }
+
+    private fun handleNewLocation(loc: Location) {
+        val lat = loc.latitude
+        val lon = loc.longitude
+        val speed = loc.speed
+
+        Log.d(TAG, "Got location: $lat, $lon, speed=$speed")
+
+        val now = System.currentTimeMillis()
+
+        // Calculate distance from last sent point
+        var distance = Float.MAX_VALUE
+        if (lastSentLat != null && lastSentLon != null) {
+            val results = FloatArray(1)
+            Location.distanceBetween(
+                lastSentLat!!, lastSentLon!!,
+                lat, lon,
+                results
+            )
+            distance = results[0]
+        }
+
+        // Rules:
+        //  - send if moved >= 10m OR
+        //  - send if 15s elapsed since last point (even if stationary)
+        val timeSinceLast = now - lastSentTime
+        val shouldSend = (distance >= 10f) || (timeSinceLast >= 15_000L) || lastSentTime == 0L
+
+        if (!shouldSend) {
+            Log.d(TAG, "Skipping send: distance=$distance m, timeSinceLast=$timeSinceLast ms")
+            return
+        }
+
+        lastSentTime = now
+        lastSentLat = lat
+        lastSentLon = lon
+
+        sendToServer(lat, lon, speed)
     }
 
     private fun sendToServer(lat: Double, lon: Double, speed: Float) {
         val json = """
-        {
-          "vehicle_id": "ANDROID01",
-          "lat": $lat,
-          "lon": $lon,
-          "speed": $speed,
-          "fuel": 0
-        }
-    """.trimIndent()
+            {
+              "vehicle_id": "ANDROID01",
+              "lat": $lat,
+              "lon": $lon,
+              "speed": $speed,
+              "fuel": 0
+            }
+        """.trimIndent()
 
         val body = json.toRequestBody("application/json".toMediaType())
         val request = Request.Builder()
-            .url("$BASE_URL/api/location")   // final URL = http://3.26.191.239:8000/api/location
+            .url("$BASE_URL/api/location")
             .post(body)
             .build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 Log.e(TAG, "Send failed", e)
-                runOnUiThread {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Send failed: ${e.message}",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
             }
 
             override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    Log.d(TAG, "Server response: ${it.code}")
-                    runOnUiThread {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Sent to server: ${it.code}",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
+                response.close()
+                Log.d(TAG, "Server response: ${response.code}")
             }
         })
     }
