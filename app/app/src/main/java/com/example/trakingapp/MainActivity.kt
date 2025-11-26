@@ -21,7 +21,9 @@ class MainActivity : AppCompatActivity() {
     private val client = OkHttpClient()
 
     // change this if your PC IP changes
-    private val BASE_URL = "http://192.168.1.22:8000"
+   // private val BASE_URL = "http://192.168.1.22:8000"
+   // private val BASE_URL = "https://trakingapp.onrender.com/api/location"
+    private val BASE_URL = "http://3.26.191.239:8000"
     private val TAG = "TrackingApp"
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,7 +37,9 @@ class MainActivity : AppCompatActivity() {
             registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
                 val fine = perms[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
                 if (fine) {
-                    Toast.makeText(this, "Location permission granted", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Location permission granted kesavan hahaha", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Location permission granted kesavan hahaha", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Location permission granted kesavan hahaha", Toast.LENGTH_SHORT).show()
                     startLocationUpdates()
 
                     // Debug: send one test ping without GPS, just to check server
@@ -55,8 +59,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun startLocationUpdates() {
         val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY, 10_000L
-        ).build()
+            Priority.PRIORITY_HIGH_ACCURACY, 5_000L // 5 seconds
+        ).setMinUpdateDistanceMeters(10f)          // only if moved > 10 m
+            .build()
 
         if (ActivityCompat.checkSelfPermission(
                 this,
@@ -75,18 +80,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun sendToServer(lat: Double, lon: Double, speed: Float) {
         val json = """
-            {
-              "vehicle_id": "ANDROID01",
-              "lat": $lat,
-              "lon": $lon,
-              "speed": $speed,
-              "fuel": 0
-            }
-        """.trimIndent()
+        {
+          "vehicle_id": "ANDROID01",
+          "lat": $lat,
+          "lon": $lon,
+          "speed": $speed,
+          "fuel": 0
+        }
+    """.trimIndent()
 
         val body = json.toRequestBody("application/json".toMediaType())
         val request = Request.Builder()
-            .url("$BASE_URL/api/location")
+            .url("$BASE_URL/api/location")   // final URL = http://3.26.191.239:8000/api/location
             .post(body)
             .build()
 

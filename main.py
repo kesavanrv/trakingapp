@@ -112,15 +112,33 @@ def get_latest_location(vehicle_id: str = "ANDROID01"):
     return dict(row)
 
 
+#@app.get("/api/locations")
+#def get_all_locations():
+#    conn = get_db()
+ #   cur = conn.cursor()
+  #  cur.execute("SELECT * FROM locations ORDER BY id DESC LIMIT 50")
+   # rows = cur.fetchall()
+    #conn.close()
+    #return [dict(r) for r in rows]
+
+
 @app.get("/api/locations")
-def get_all_locations():
+def get_all_locations(vehicle_id: str = "ANDROID01", limit: int = 500):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM locations ORDER BY id DESC LIMIT 50")
+    cur.execute(
+        """
+        SELECT id, vehicle_id, lat, lon, speed, fuel, timestamp
+        FROM locations
+        WHERE vehicle_id = ?
+        ORDER BY id ASC
+        LIMIT ?
+        """,
+        (vehicle_id, limit),
+    )
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
 
 # ---------- Map page ----------
 
